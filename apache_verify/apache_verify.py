@@ -40,6 +40,7 @@ class Outcome:
             'color': Colors.FAIL}
 
 class Error:
+    BINARY_FILES = 9
     DIGEST = 10
     DECOMPRESS = 11
 
@@ -263,23 +264,24 @@ def check_rat():
 
 
 def check_for_binary_files():
-    filter_re = r'empty|text|^\./\.git'
+    find_cmd = ['find', '.', '-type', 'f']
+    xargs_cmd = ['xargs', '-I{}', 'file', '{}']
+    egrep_cmd = ['egrep', '-v', 'empty|text$|^\./\.git']
 
-check_for_binary_files() {
-    local binary_files="$(find . -type f | \
-                          xargs -I{} file {} | \
-                          egrep -v "empty|text|^\./\.git")"
-    if [[ -n "${binary_files}" ]]; then
-	printf "%-40s${FAIL_T_C}FAILED${DEF_T_C}\n" "Binary File Check:"
+    find_proc = subprocess.Popen(find_cmd, stdout=subprocess.PIPE)
+    xargs_proc = subprocess.Popen(xargs_cmd,
+                                  stdin=find_proc.stdout,
+                                  stdout=subprocess.PIPE)
+    egrep_output = run_command(Error.BINARY_FILES,
+                               egrep_cmd,
+                               stdin=xargs_proc.stdout)
+    if egrep_output:
+        print build_outcome_stmt(Outcome.FAIL, ltxt='Binary File Check')
 
-	# iterate over possibly offending files
-	for bf in "${binary_files}"; do
-	    printf "%-40s${bf}" ""
-	done
-    else
-	printf "%-40s${PASS_T_C}PASSED${DEF_T_C}\n" "Binary File Check:"
-    fi
-}
+        for file in egrep_output.split('\n'):
+            print '{:<{}s}'.format(file, L_PAD)
+    else:
+        print build_outcome_stmt(Outcome.PASS, ltxt='Binary File Check')
 
 
 def compile_source():
@@ -289,15 +291,6 @@ def compile_source():
         print build_outcome_stmt(Outcome.PASS, ltxt='RAT Check:')
     else:
         print build_outcome_stmt(Outcome.FAIL, ltxt='RAT Check:')
-
-compile_source() {
-    mvn clean install -DskipTests &>/dev/null
-    if [[ $? > 0 ]]; then
-	printf "%-40s${FAIL_T_C}FAILED${DEF_T_C}\n" "Compilation:"
-    else
-	printf "%-40s${PASS_T_C}PASSED${DEF_T_C}\n" "Compilation:"
-    fi
-}
 
 
 def execute_tests():
@@ -312,6 +305,9 @@ def execute_tests():
 def test_source(filename):
     print "Expanding:", os.path.basename(filename)
 
+    expand_bundle(filename)
+
+"""
 test_source() {
     printf "\nExpanding: $(basename $1)\n"
     expand_bundle "$1"
@@ -343,8 +339,15 @@ test_source() {
     cd ..
     rm -rf "${expanded_dir}" 
 }
+"""
+
 
 def main(argv, argc):
+    if argc < 2:
+        print "Usage: ./apache-verify <project-name> <version> [ <release> ]"
+        # TODO: exit
+
+    project_name = argv[1]
 
 # check for a valid apache project to verify
 if [[ ! "$1" || ! "$2" || ! "$3" ]]; then
