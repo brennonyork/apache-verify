@@ -1,0 +1,3 @@
+#!/bin/bash
+
+python ../apache_verify/apache_verify.py $1 $2 $3

@@ -70,7 +70,7 @@ class ApacheProject:
         self.comparable_digest_codes = comparable_digest_codes
 
     def __repr__(self):
-        return "ApacheProject<%s>" % self.name
+        return "ApacheProject<{}>".format(self.name)
 
 apex-malhar = ApacheProject('apex')
                             
