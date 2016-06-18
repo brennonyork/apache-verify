@@ -18,7 +18,8 @@ import re
 import sys
 import subprocess
 
-from apache_projects import *
+from base import Color, Error, Outcome
+from projects import *
 
 ##
 # Global variables
@@ -28,55 +29,6 @@ CWD = os.getcwd()
 
 # the left pad margin before printing PASS or FAIL text
 L_PAD = 40
-
-# Text colors
-class Colors:
-    PASS = '\033[32m'
-    FAIL = '\033[31m'
-    DEF  = '\033[39m'
-
-class Outcome:
-    PASS = {'txt': 'PASSED', 
-            'color': Colors.PASS}
-    FAIL = {'txt': 'FAILED', 
-            'color': Colors.FAIL}
-
-class Error:
-    BINARY_FILES = 9
-    DIGEST = 10
-    DECOMPRESS = 11
-
-class ApacheProject:
-    def __init__(self,
-                 name,
-                 is_incubator=False,
-                 comparable_digest_codes=('SHA',
-                                          'MD5'),
-                 necessary_files=('DISCLAIMER',
-                                  'LICENSE',
-                                  'NOTICE',
-                                  'README.md',
-                                  'CHANGELOG.md')):
-        """
-        Define a new Apache project.
-
-        :param name: the shortened project name
-        :param is_incubator: boolean dictating if the project is currently
-        under incubation
-        :param comparable_digest_codes: allowable digest codes that the project
-        natively supports to compare and check against
-        :param necessary_files: set of necessary files that the project
-        requires in its root directory to be valid by Apache
-        """
-        self.name = name
-        self.is_incubator = is_incubator
-        self.comparable_digest_codes = comparable_digest_codes
-
-    def __repr__(self):
-        return "ApacheProject<{}>".format(self.name)
-
-apex-malhar = ApacheProject('apex')
-                            
 
 # distribution URL for all Apache projects
 apache_dist_url = "https://dist.apache.org/repos/dist/"
@@ -98,7 +50,7 @@ RC=""
 
 
 def print_error_and_exit(err_msg, exit_code):
-    err_prefix = Colors.FAIL + 'ERROR:' + Colors.DEF
+    err_prefix = Color.FAIL + 'ERROR:' + Color.DEF
 
     print err_prefix, err_msg
     sys.exit(exit_code)
@@ -133,9 +85,9 @@ def build_outcome_stmt(outcome, ltxt='', rtxt=None):
     outcome_txt = '{:<{}s}' + outcome['color'] + outcome['txt']
     
     if rtxt:
-        outcome_txt += '; ' + rtxt + Colors.DEF
+        outcome_txt += '; ' + rtxt + Color.DEF
     else:
-        outcome_txt += Colors.DEF
+        outcome_txt += Color.DEF
 
     return outcome_txt.format(ltxt, L_PAD)
 

@@ -1,5 +1,23 @@
 #!/usr/bin/env python
 
+# Text colors
+class Color:
+    PASS = '\033[32m'
+    FAIL = '\033[31m'
+    DEF  = '\033[39m'
+
+class Outcome:
+    PASS = {'txt': 'PASSED', 
+            'color': Color.PASS}
+    FAIL = {'txt': 'FAILED', 
+            'color': Color.FAIL}
+
+# Error codes
+class Error:
+    BINARY_FILES = 9
+    DIGEST = 10
+    DECOMPRESS = 11
+
 class ApacheProject:
     def __init__(self,
                  name,
