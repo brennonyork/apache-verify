@@ -18,6 +18,8 @@ import re
 import sys
 import subprocess
 
+from apache_projects import *
+
 ##
 # Global variables
 ##
