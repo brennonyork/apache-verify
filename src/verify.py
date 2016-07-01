@@ -17,10 +17,11 @@ import os
 import re
 import sys
 import click
+import urllib2
 import subprocess
 
 from base import Color, Error, Outcome
-from urlparse import urljoin
+from bs4 import BeautifulSoup
 from projects import *
 
 ##
@@ -89,9 +90,11 @@ def build_outcome_stmt(outcome, ltxt='', rtxt=None):
 # ret:  if the program is present nothing else print a message asking to
 #       install the program and exit
 def check_for_programs(prog_names):
-    if not type(prog_names) == list:
-        prog_names = [prog_names]
+    '''
+    determine if the set of programs provided are present on the system
 
+    :param prog_names: set of programs to check for existence
+    '''
     for prog_name in prog_names:
         run_command(Error.PROGRAM_CHECK, ['command', '-v', prog_name])
 
@@ -286,22 +289,40 @@ def test_source(filename):
     #rm -rf 'expanded_dir'
 
 @click.command()
-@click.option('--keys-url', default=False, nargs=1, help='URL to the KEYS file for verification')
-@click.option('--rat-cmd', default='', help='command to properly execute a RAT check')
-@click.option('--test-cmd', default='', help='command to properly execute source code tests')
-@click.option('--compile-cmd', default='', help='command to properly execute source code compilation')
-@click.option('--staging-dir', default='./staging-local', help='local directory to perform testing')
-@click.option('--select-package', is_flag=True)
-@click.argument('release-url', help='URL to the release binaries to be verified')
-def main(release_url, keys_url, rat_cmd, test_cmd, compile_cmd, staging_dir, select_package):
-    necessary_programs_list = ['gpg', 'wget', 'openssl', 'mvn']
-    allowable_file_exts = ['tgz', 'zip', 'gz']
+@click.option('--keys-url',
+              default=False,
+              nargs=1,
+              help='URL to the KEYS file for verification')
+@click.option('--rat-cmd',
+              default='mvn apache-rat:check',
+              help='command to properly execute a RAT check')
+@click.option('--compile-cmd',
+              default='mvn clean install -DskipTests',
+              help='command to properly execute source code compilation')
+@click.option('--test-cmd',
+              default='mvn install',
+              help='command to properly execute source code tests')
+@click.option('--staging-dir',
+              default='./staging-local',
+              help='local directory to perform testing')
+@click.option('--select-package',
+              is_flag=True)
+@click.argument('release-url')
+def main(release_url,
+         keys_url,
+         rat_cmd,
+         compile_cmd,
+         test_cmd,
+         staging_dir,
+         select_package):
+    necessary_programs = set(['gpg', 'wget', 'openssl'])
+    allowable_file_exts = re.compile(r'tgz$|tar\.gz$|zip$')
 
     # ensure machine has the correct prerequisite programs, files, etc.
-    [neccessary_programs_list.append(cmd.split()[0])
-     for cmd in [rat_cmd, test_cmd, compile_cmd] if cmd]
+    [necessary_programs.add(cmd.split()[0])
+     for cmd in [rat_cmd, compile_cmd, test_cmd]]
 
-    check_for_programs(necessary_programs_list)
+    check_for_programs(necessary_programs)
 
     # download all necessary files into the staging directory
     if not os.path.exists(staging_dir):
@@ -309,16 +330,34 @@ def main(release_url, keys_url, rat_cmd, test_cmd, compile_cmd, staging_dir, sel
 
     os.chdir(staging_dir)
 
+    # default to assuming the 'KEYS' file is within the `release_url` directory
     if not keys_url:
         keys_url = release_url + '/KEYS'
 
     import_keys(keys_url)
 
-    # currantly can only choose between 
+    html = BeautifulSoup(urllib2.urlopen(release_url).read(), 'html.parser')
+
+    package_list = [i.get('href') for i in html.find_all('a')
+                    if allowable_file_exts.findall(i.get('href'))]
+
     if select_package:
-        package_list = [i.get('href') for i in soup.find_all('a')
-                        if os.path.splitext(i.get('href'))[1] 
-                        in allowable_file_exts]
+        package_map = dict()
+        for idx, package in enumerate(package_list):
+            package_map[idx] = package
+
+        print package_map
+
+        try:
+            package_selection = int(raw_input('Your selection:'))
+            package_list = [package_map[package_selection]]
+        except ValueError:
+            print 'value error'
+        except KeyError:
+            print 'key error'
+
+    for package in package_list:
+        print package
 
 '''
     download_sourcecode
