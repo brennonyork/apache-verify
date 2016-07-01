@@ -16,9 +16,11 @@
 import os
 import re
 import sys
+import click
 import subprocess
 
 from base import Color, Error, Outcome
+from urlparse import urljoin
 from projects import *
 
 ##
@@ -30,24 +32,6 @@ CWD = os.getcwd()
 # the left pad margin before printing PASS or FAIL text
 L_PAD = 40
 
-# distribution URL for all Apache projects
-apache_dist_url = "https://dist.apache.org/repos/dist/"
-
-# Staging directory to download all files to (relative to calling directory)
-# note - this is a local directory
-STAGING_DIR="staging"
-
-# URL for the staging source code within Apache
-STAGING_URL=""
-# URL for the KEYS file to verify and import correct signatures
-KEYS_URL=""
-# Directory where the release is located off the Apache site
-RELEASE_DIR=""
-# Version of the project to download and test
-PROJ_VERSION=""
-# Release candidate to test against
-RC=""
-
 
 def print_error_and_exit(err_msg, exit_code):
     err_prefix = Color.FAIL + 'ERROR:' + Color.DEF
@@ -56,24 +40,33 @@ def print_error_and_exit(err_msg, exit_code):
     sys.exit(exit_code)
 
 
-def run_command(exit_code, *popen_args, **kwargs):
+def run_command(exit_code, popen_args, **kwargs):
     try:
         if 'return_code' in kwargs and kwargs['return_code'] == True:
-            ret = subprocess.check_call(popen_args, kwargs)
+            kwargs.pop('return_code', None)
+            ret = subprocess.check_call(popen_args, **kwargs)
+        elif 'stdout' in kwargs:
+            # design note: this is necessary to write stdout into devnull as
+            # subprocess.check_output does not allow it for suppressing output.
+            # this also creates the issue that errors here aren't raises
+            # as proper exceptions. this is used in the run_command_into_devnull
+            # function.
+            # TODO: is there a better way?
+            ret = subprocess.call(popen_args, **kwargs)
         else:
-            ret = subprocess.check_output(popen_args, kwargs)
+            ret = subprocess.check_output(popen_args, **kwargs)
     except subprocess.CalledProcessError:
-        print_error_and_exit('running command ' + ' '.join(popen_args),
+        print_error_and_exit('running \'' + ' '.join(popen_args) + '\'',
                              exit_code)
     return ret
 
 
-def run_command_into_devnull(exit_code, *popen_args, **kwargs):
+def run_command_into_devnull(exit_code, popen_args, **kwargs):
     with open(os.devnull, 'w') as devnull:
-        kwargs['stderr'] = subprocess.stdout
+        kwargs['stderr'] = subprocess.STDOUT
         kwargs['stdout'] = devnull
 
-        ret = run_command(exit_code, popen_args, kwargs)
+        ret = run_command(exit_code, popen_args, **kwargs)
     return ret
 
 
@@ -95,16 +88,20 @@ def build_outcome_stmt(outcome, ltxt='', rtxt=None):
 # arg1: program to determine if present on the system as a string
 # ret:  if the program is present nothing else print a message asking to
 #       install the program and exit
-def check_for_command(prog_name):
-    run_command(1, ['command', '-v', prog_name]):
+def check_for_programs(prog_names):
+    if not type(prog_names) == list:
+        prog_names = [prog_names]
+
+    for prog_name in prog_names:
+        run_command(Error.PROGRAM_CHECK, ['command', '-v', prog_name])
 
 
 def import_keys(keys_url):
     wget_cmd = ['wget', '-nc', '-np', '-nd', '--quiet', keys_url]
     gpg_cmd  = ['gpg', '--import', 'KEYS']
 
-    run_command(wget_cmd)
-    run_command_into_devnull(gpg_cmd)
+    run_command(Error.WGET, wget_cmd)
+    run_command_into_devnull(Error.GPG, gpg_cmd, return_code=True)
 
 def download_sourcecode(staging_url):
     wget_cmd = ['wget', '-r', '-nc', '-np', '-nd', '--reject', 'html/txt',
@@ -145,7 +142,7 @@ def verify_asc(basefile):
 # ret:  text stating whether the digest comparison was a match or not 
 def compare_digest(digest_type, filename):
     digest_codes = {'SHA': {'openssl_code': '-sha512',
-                            'file_ext': 'sha'}
+                            'file_ext': 'sha'},
                     'MD5': {'openssl_code': '-md5',
                             'file_ext': 'md5'}}
 
@@ -261,122 +258,70 @@ def test_source(filename):
 
     expand_bundle(filename)
 
-"""
-test_source() {
-    printf "\nExpanding: $(basename $1)\n"
-    expand_bundle "$1"
+    expanded_dir = run_command(['find', '.', '-type', 'd', '-d', '1'])
 
-    local expanded_dir="$(find . -type d -d 1)"
-    cd "$expanded_dir"
+    #cd 'expanded_dir'
 
-    # 3. Check for existence of DISCLAIMER, LICENSE, NOTICE, README.md and 
-    #    CHANGELOG.md
+    # Check for existence of necessary files
 
-    check_for_all_files
+    #check_for_files(<proj>)
 
-    # 4. Run RAT checks
+    # Run RAT tests
 
-    check_rat
+    #check_rat()
 
-    # 5. Check for any binary files
+    # Check for any binary files
 
-    check_for_binary_files
+    #check_for_binary_files()
 
-    # 6. Check compilation
+    # Check compilation
 
-    compile_source
+    #compile_source()
 
-    # 7. Execute tests
+    # Execute tests
 
-    execute_tests
+    #execute_tests()
 
-    cd ..
-    rm -rf "${expanded_dir}" 
-}
-"""
+    #cd ..
+    #rm -rf 'expanded_dir'
 
+@click.command()
+@click.option('--keys-url', default=False, nargs=1, help='URL to the KEYS file for verification')
+@click.option('--rat-cmd', default='', help='command to properly execute a RAT check')
+@click.option('--test-cmd', default='', help='command to properly execute source code tests')
+@click.option('--compile-cmd', default='', help='command to properly execute source code compilation')
+@click.option('--staging-dir', default='./staging-local', help='local directory to perform testing')
+@click.option('--select-package', is_flag=True)
+@click.argument('release-url', help='URL to the release binaries to be verified')
+def main(release_url, keys_url, rat_cmd, test_cmd, compile_cmd, staging_dir, select_package):
+    necessary_programs_list = ['gpg', 'wget', 'openssl', 'mvn']
+    allowable_file_exts = ['tgz', 'zip', 'gz']
 
-def main(argv, argc):
-    if argc < 2:
-        print "Usage: ./apache-verify <project-name> <version> [ <release> ]"
-        # TODO: exit
+    # ensure machine has the correct prerequisite programs, files, etc.
+    [neccessary_programs_list.append(cmd.split()[0])
+     for cmd in [rat_cmd, test_cmd, compile_cmd] if cmd]
 
-    project_name = argv[1]
+    check_for_programs(necessary_programs_list)
 
-# check for a valid apache project to verify
-if [[ ! "$1" || ! "$2" || ! "$3" ]]; then
-    printf "${FAIL_T_C}USAGE:${DEF_T_C} "
-    printf "$ ./apache-verify-release <project-name> <version> "
-    printf "<release-candidate>\n"
-    exit 1
-fi
+    # download all necessary files into the staging directory
+    if not os.path.exists(staging_dir):
+        run_command(Error.MKDIR, ['mkdir', '-p', staging_dir])
 
-# set the project version and release candidate variables
-PROJ_VERSION="$2"
+    os.chdir(staging_dir)
 
-# if we are checking a release candidate (and it was supplied on the command
-# line) then check for it here
-if [[ -n "$3" ]]; then
-    RC="$3"
-    RC_SUFFIX="-$3"
-else
-    RC=""
-    RC_SUFFIX=""
-fi
+    if not keys_url:
+        keys_url = release_url + '/KEYS'
 
-# ensure the project is one that is supported
-case "$1" in
-    "apex-core")
-	IS_INCUBATOR=""
-	RELEASE_DIR="apache-apex-core-${PROJ_VERSION}${RC_SUFFIX}/"
-	STAGING_URL="${apache_dist_url}dev/incubator/apex/${RELEASE_DIR}"
-	KEYS_URL="${apache_dist_url}release/incubator/apex/KEYS"
-	;;
-    "apex-malhar")
-	IS_INCUBATOR=""
-	APACHE_PROJ_NAME="apex"
-	RELEASE_DIR="apache-apex-malhar-${PROJ_VERSION}${RC_SUFFIX}/"
-	STAGING_URL="${apache_dist_url}dev/incubator/apex/${RELEASE_DIR}"
-	KEYS_URL="${apache_dist_url}release/incubator/apex/KEYS"
-	;;
-    *)
-	printf "Valid projects to verify:\n"
-	printf "\tapex-core\n"
-	printf "\tapex-malhar\n"
-	exit 1
-	;;
-esac
+    import_keys(keys_url)
 
-# arg1: apache project name
-# arg2: boolean string to determine if the project is an incubator or not
-# arg3: release directory name
-build_staging_url() {
-    if [[ -n "$2" ]]; then
-	echo "${apache_dist_url}dev/incubator/$1/$3"
-    else
-	echo "${apache_dist_url}dev/incubator/$1/$3"
-    fi
-}
+    # currantly can only choose between 
+    if select_package:
+        package_list = [i.get('href') for i in soup.find_all('a')
+                        if os.path.splitext(i.get('href'))[1] 
+                        in allowable_file_exts]
 
-STAGING_URL="$(build_staging_url )"
-
-# 0. Ensure machine has the correct prerequisite programs, files, etc.
-
-check_for_command "gpg"
-check_for_command "wget"
-check_for_command "openssl"
-check_for_command "mvn"
-
-# download all necessary files into the staging directory
-if [[ ! -d "${STAGING_DIR}" ]]; then
-    mkdir -p "${STAGING_DIR}"
-fi
-
-cd "${STAGING_DIR}"
-
-import_keys
-
-download_sourcecode
+'''
+    download_sourcecode
 
 TGZ_FILENAME="$(find . -name '*.tar.gz')"
 ZIP_FILENAME="$(find . -name '*.zip')"
@@ -398,9 +343,10 @@ test_source "${ZIP_FILENAME}"
 
 cd "${CWD}"
 rm -rf "${STAGING_DIR}"
+'''
 
 if __name__ == "__main__":
     try:
-        main(sys.argv, len(sys.argv))
+        main()
     except KeyboardInterrupt:
         print "noe"
