@@ -72,7 +72,7 @@ def run_command_into_devnull(exit_code, popen_args, **kwargs):
     return ret
 
 
-def build_outcome_stmt(outcome, ltxt='', rtxt=None):
+def build_outcome_stmt(outcome, ltxt='', rtxt=''):
     '''
     Accepts an Outcome object and optional left and right text to augment the
     outcome statement.
@@ -190,35 +190,17 @@ def check_for_files(proj):
 
 
 # arg1: the compressed source ball (either tar.gz or zip)
-def expand_bundle(sourceball):
-    decompress_codes = {'gz': ['tar', '-xzf'],
-                        'zip': ['unzip', '-oqq']}
-
-    ext = os.path.splitext(sourceball)[1]
-
-    if not ext in decompress_codes:
-        print_error_and_exit("cannot expand file type '" + ext + "'",
-                             Error.DECOMPRESS)
-
+def expand_bundle(sourceball, ext, decompress_codes):
     decompress_cmd = decompress_codes[ext]
     decompress_cmd.append(sourceball)
 
-    run_command(decompress_cmd)
-
-# ret: text stating whether the RAT checks passed or not
-def check_rat():
-    mvn_cmd = ['mvn', 'apache-rat:check']
-
-    if run_command_into_devnull(mvn_cmd, return_code=True) == 0:
-        print build_outcome_stmt(Outcome.PASS, ltxt='RAT Check:')
-    else:
-        print build_outcome_stmt(Outcome.FAIL, ltxt='RAT Check:')
+    run_command(Error.DECOMPRESS, decompress_cmd)
 
 
 def check_for_binary_files():
     find_cmd = ['find', '.', '-type', 'f']
     xargs_cmd = ['xargs', '-I{}', 'file', '{}']
-    egrep_cmd = ['egrep', '-v', 'empty|text$|^\./\.git']
+    egrep_cmd = ['egrep', '-v', 'empty|text|^\./\.git']
 
     find_proc = subprocess.Popen(find_cmd, stdout=subprocess.PIPE)
     xargs_proc = subprocess.Popen(xargs_cmd,
@@ -230,61 +212,19 @@ def check_for_binary_files():
     if egrep_output:
         print build_outcome_stmt(Outcome.FAIL, ltxt='Binary File Check')
 
-        for file in egrep_output.split('\n'):
-            print '{:<{}s}'.format(file, L_PAD)
+        for file in egrep_output.strip().split('\n'):
+            output = '{:<{}s}'+file
+            print output.format('', L_PAD)
     else:
         print build_outcome_stmt(Outcome.PASS, ltxt='Binary File Check')
 
-
-def compile_source(compile_cmd_str):
-    compile_cmd = compile_cmd_str.split()
-
-    if run_command_into_devnull(compile_cmd, return_code=True) == 0:
-        print build_outcome_stmt(Outcome.PASS, ltxt='Compile Source:')
+def check_cmd_for_exit_code(error_code, cmd, exit_code, ltxt='', rtxt=''):
+    if run_command_into_devnull(error_code,
+                                cmd.split(),
+                                return_code=True) == exit_code:
+        print build_outcome_stmt(Outcome.PASS, ltxt=ltxt, rtxt=rtxt)
     else:
-        print build_outcome_stmt(Outcome.FAIL, ltxt='Compile Source:')
-
-
-def execute_tests(test_cmd_str):
-    test_cmd = test_cmd_str.split()
-
-    if run_command_into_devnull(test_cmd, return_code=True) == 0:
-        print build_outcome_stmt(Outcome.PASS, ltxt='Execute Tests:')
-    else:
-        print build_outcome_stmt(Outcome.FAIL, ltxt='Execute Tests:')
-
-
-def test_source(filename):
-    print "Expanding:", os.path.basename(filename)
-
-    expand_bundle(filename)
-
-    expanded_dir = run_command(['find', '.', '-type', 'd', '-d', '1'])
-
-    #cd 'expanded_dir'
-
-    # Check for existence of necessary files
-
-    #check_for_files(<proj>)
-
-    # Run RAT tests
-
-    #check_rat()
-
-    # Check for any binary files
-
-    #check_for_binary_files()
-
-    # Check compilation
-
-    #compile_source()
-
-    # Execute tests
-
-    #execute_tests()
-
-    #cd ..
-    #rm -rf 'expanded_dir'
+        print build_outcome_stmt(Outcome.FAIL, ltxt=ltxt, rtxt=rtxt)
 
 
 @click.command()
@@ -320,8 +260,6 @@ def main(release_url,
          test_cmd,
          staging_dir,
          select_package):
-    necessary_programs = set(['gpg', 'wget'])
-
     # allowable file extensions that are supported. they sit as a regex to
     # ensure we check the end of the file path of an unknown size. e.g.
     # 'zip' is 3 chars and 'tar.gz' is 5 so we cannot set a limit. add to this
@@ -332,6 +270,8 @@ def main(release_url,
     decompression_cmds = {'tar.gz': ['tar', '-xzf'],
                           'tgz': ['tar', '-xzf'],
                           'zip': ['unzip', '-oqq']}
+
+    necessary_programs = set(['gpg', 'wget'])
 
     # ensure machine has the correct prerequisite programs, files, etc.
     [necessary_programs.add(cmd.split()[0])
@@ -369,7 +309,7 @@ def main(release_url,
             print '{}: {}'.format(idx, package)
 
         try:
-            package_selection = int(raw_input('Your selection:'))
+            package_selection = int(raw_input('Your selection: '))
             package_list = [package_map[package_selection]]
         except ValueError:
             print 'value error'
@@ -393,6 +333,31 @@ def main(release_url,
 
         compare_digests(package, {'sha': sha512_digest_cmd,
                                   'md5': md5_digest_cmd})
+
+        run_command(Error.DECOMPRESS, decompression_cmds[file_ext] + [package])
+
+        expanded_dir = run_command(Error.FIND, ['find', '.', '-type', 'd', '-d', '1']).strip()
+
+        os.chdir(expanded_dir)
+
+        # Check for existence of necessary files
+        #check_for_files()
+
+        # Check for any binary files
+        check_for_binary_files()
+
+        # Run RAT tests
+        #check_cmd_for_exit_code(Error.RAT, rat_cmd, 0, ltxt='RAT Check:')
+
+        # Check compilation
+        check_cmd_for_exit_code(Error.COMPILATION, compile_cmd, 0, ltxt='Compile Source:')
+
+        # Execute tests
+        check_cmd_for_exit_code(Error.TESTS, compile_cmd, 0, ltxt='Execute Tests:')
+
+        os.chdir('..')
+        #run_command(Error.RM, ['rm', '-rf', expanded_dir])
+        
 '''
     download_sourcecode
 

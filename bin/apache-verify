@@ -3,4 +3,4 @@
 # From: http://stackoverflow.com/a/246128
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-python "${DIR}"/../src/verify.py "$*"
+python "${DIR}"/../src/verify.py "$@"

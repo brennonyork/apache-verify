@@ -21,9 +21,13 @@ class Error:
     GPG = 5
     RM = 6
     OPENSSL = 7
+    FIND = 8
     BINARY_FILES = 9
     DIGEST = 10
     DECOMPRESS = 11
+    RAT = 12
+    COMPILATION = 13
+    TESTS = 14
 
 class ApacheProject:
     def __init__(self,
