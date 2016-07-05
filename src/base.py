@@ -20,6 +20,7 @@ class Error:
     WGET = 4
     GPG = 5
     RM = 6
+    OPENSSL = 7
     BINARY_FILES = 9
     DIGEST = 10
     DECOMPRESS = 11

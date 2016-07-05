@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import click
+import hashlib
 import urllib2
 import subprocess
 
@@ -106,6 +107,7 @@ def import_keys(keys_url):
     run_command(Error.WGET, wget_cmd)
     run_command_into_devnull(Error.GPG, gpg_cmd, return_code=True)
 
+
 def download_sourcecode(url):
     wget_cmd = ['wget', '-r', '-nc', '-np', '-nd', '--reject', 'html/txt',
                 '--quiet', url]
@@ -114,6 +116,7 @@ def download_sourcecode(url):
 
     # remove any robots file if found
     run_command(Error.RM, ['rm', '-f', 'robots.txt'])
+
 
 # arg1: filename with a corresponding .asc file to verify using gpg
 # ret:  text of the gpg verification command
@@ -127,7 +130,6 @@ def verify_asc(basefile):
                    '--status-fd=' + str(gpg_output_file.fileno()),
                    basefile + '.asc', basefile]
 
-        print "Verifying Sig:", os.path.basename(basefile)
         run_command_into_devnull(Error.GPG, gpg_cmd)
 
     # design note: we must close the file before reading as it seems the only
@@ -141,50 +143,37 @@ def verify_asc(basefile):
 
         signer = ' '.join(signer_re.findall(gpg_output)[0].split()[-3:])
 
-        if "GOODSIG" in matches and "VALIDSIG" in matches:
-            print build_outcome_stmt(Outcome.PASS, rtxt='GOODSIG from '+signer)
+        if 'GOODSIG' in matches and 'VALIDSIG' in matches:
+            print build_outcome_stmt(Outcome.PASS, ltxt='Verifying Signature:',
+                                     rtxt='GOODSIG from '+signer)
         else:
-            print build_outcome_stmt(Outcome.FAIL, rtxt='BADSIG')
+            print build_outcome_stmt(Outcome.FAIL, ltxt='Verifying Signature:',
+                                     rtxt='BADSIG')
             print gpg_output
 
     run_command(Error.RM, ['rm', '-f', gpg_output_filename])
 
+
 # arg1: digest type (either "SHA" or "MD5")
 # arg2: file to compare with extension (e.g. "tar.gz" or "zip")
 # ret:  text stating whether the digest comparison was a match or not 
-def compare_digest(digest_type, filename):
-    digest_codes = {'SHA': {'openssl_code': '-sha512',
-                            'file_ext': 'sha'},
-                    'MD5': {'openssl_code': '-md5',
-                            'file_ext': 'md5'}}
+def compare_digests(filename, dgst_cmds):
+    for dgst, dgst_cmd in dgst_cmds.iteritems():
+        dgst_cmd = dgst_cmd.strip().split() + [filename]
 
-    if not digest_type in digest_codes:
-        print_error_and_exit("only 'SHA' and 'MD5' digests available",
-                             Error.DIGEST)
+        calced_digest = run_command(Error.DIGEST, dgst_cmd)
 
-    openssl_cmd = ['openssl', 'dgst', 
-                   digest_codes[digest_type]['openssl_code'],
-                   filename]
+        # TODO: move this to a urllib2.urlopen(*).read() call
+        with open(filename + '.' + dgst, 'r') as given_digest_file:
+            given_digest = given_digest_file.read()
 
-    calced_digest = run_command(openssl_cmd).split(' ')[1]
-    
-    with open(filename + digest_codes[digest_type]['file_ext'],
-              'r') as given_digest_file:
-        given_digest = given_digest_file.read().strip().split(' ')[0]
+        if calced_digest == given_digest:
+            print build_outcome_stmt(Outcome.PASS, ltxt='Validating Digest('+dgst+'):',
+                                     rtxt='Match')
+        else:
+            print build_outcome_stmt(Outcome.FAIL, ltxt='Validating Digest('+dgst+'):',
+                                     rtxt='Mismatch')
 
-    if calced_digest == given_digest:
-        print build_outcome_stmt(Outcome.PASS, ltxt=filename + ':',
-                                 rtxt='Match')
-    else:
-        print build_outcome_stmt(Outcome.FAIL, ltxt=filename + ':',
-                                 rtxt='Mismatch')
-
-# arg1: filename of the tarball or zip file
-def compare_all_digests(proj, abs_filename):
-    print "Checking digest:", os.path.basename(abs_filename)
-    
-    for digest in proj.comparable_digest_codes:
-        compare_digest(digest, abs_filename)
 
 # arg1: name of file to find within the project directory
 # ret:  text stating whether the file was found or not
@@ -247,22 +236,22 @@ def check_for_binary_files():
         print build_outcome_stmt(Outcome.PASS, ltxt='Binary File Check')
 
 
-def compile_source():
-    mvn_cmd = ['mvn', 'clean', 'install', '-DskipTests']
+def compile_source(compile_cmd_str):
+    compile_cmd = compile_cmd_str.split()
 
-    if run_command_into_devnull(mvn_cmd, return_code=True) == 0:
-        print build_outcome_stmt(Outcome.PASS, ltxt='RAT Check:')
+    if run_command_into_devnull(compile_cmd, return_code=True) == 0:
+        print build_outcome_stmt(Outcome.PASS, ltxt='Compile Source:')
     else:
-        print build_outcome_stmt(Outcome.FAIL, ltxt='RAT Check:')
+        print build_outcome_stmt(Outcome.FAIL, ltxt='Compile Source:')
 
 
-def execute_tests():
-    mvn_cmd = ['mvn', 'install']
+def execute_tests(test_cmd_str):
+    test_cmd = test_cmd_str.split()
 
-    if run_command_into_devnull(mvn_cmd, return_code=True) == 0:
-        print build_outcome_stmt(Outcome.PASS, ltxt='RAT Check:')
+    if run_command_into_devnull(test_cmd, return_code=True) == 0:
+        print build_outcome_stmt(Outcome.PASS, ltxt='Execute Tests:')
     else:
-        print build_outcome_stmt(Outcome.FAIL, ltxt='RAT Check:')
+        print build_outcome_stmt(Outcome.FAIL, ltxt='Execute Tests:')
 
 
 def test_source(filename):
@@ -297,11 +286,16 @@ def test_source(filename):
     #cd ..
     #rm -rf 'expanded_dir'
 
+
 @click.command()
 @click.option('--keys-url',
               default=False,
               nargs=1,
               help='URL to the KEYS file for verification')
+@click.option('--md5-digest-cmd',
+              default='openssl dgst -md5')
+@click.option('--sha512-digest-cmd',
+              default='openssl dgst -sha512')
 @click.option('--rat-cmd',
               default='mvn apache-rat:check',
               help='command to properly execute a RAT check')
@@ -319,12 +313,14 @@ def test_source(filename):
 @click.argument('release-url')
 def main(release_url,
          keys_url,
+         md5_digest_cmd,
+         sha512_digest_cmd,
          rat_cmd,
          compile_cmd,
          test_cmd,
          staging_dir,
          select_package):
-    necessary_programs = set(['gpg', 'wget', 'openssl'])
+    necessary_programs = set(['gpg', 'wget'])
 
     # allowable file extensions that are supported. they sit as a regex to
     # ensure we check the end of the file path of an unknown size. e.g.
@@ -355,7 +351,10 @@ def main(release_url,
 
     import_keys(keys_url)
 
-    html = BeautifulSoup(urllib2.urlopen(release_url).read(), 'html.parser')
+    try:
+        html = BeautifulSoup(urllib2.urlopen(release_url).read(), 'html.parser')
+    except urllib2.URLError:
+        pass
 
     package_list = [i.get('href') for i in html.find_all('a')
                     if allowable_file_exts.findall(i.get('href'))]
@@ -392,6 +391,8 @@ def main(release_url,
 
         verify_asc(package)
 
+        compare_digests(package, {'sha': sha512_digest_cmd,
+                                  'md5': md5_digest_cmd})
 '''
     download_sourcecode
 
