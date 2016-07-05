@@ -72,10 +72,10 @@ def run_command_into_devnull(exit_code, popen_args, **kwargs):
 
 
 def build_outcome_stmt(outcome, ltxt='', rtxt=None):
-    if not isinstance(outcome, Outcome):
-        print "error code: TODO HERE"
-        sys.exit(1)
-
+    '''
+    Accepts an Outcome object and optional left and right text to augment the
+    outcome statement.
+    '''
     outcome_txt = '{:<{}s}' + outcome['color'] + outcome['txt']
     
     if rtxt:
@@ -106,39 +106,48 @@ def import_keys(keys_url):
     run_command(Error.WGET, wget_cmd)
     run_command_into_devnull(Error.GPG, gpg_cmd, return_code=True)
 
-def download_sourcecode(staging_url):
+def download_sourcecode(url):
     wget_cmd = ['wget', '-r', '-nc', '-np', '-nd', '--reject', 'html/txt',
-                '--quiet', staging_url]
+                '--quiet', url]
 
-    run_command(wget_cmd)
+    run_command(Error.WGET, wget_cmd)
 
     # remove any robots file if found
-    run_command(['rm', '-f', 'robots.txt'])
+    run_command(Error.RM, ['rm', '-f', 'robots.txt'])
 
 # arg1: filename with a corresponding .asc file to verify using gpg
 # ret:  text of the gpg verification command
 def verify_asc(basefile):
     gpg_output_filename = 'gpg-verify-output'
+    valid_sig_re = re.compile(r'GOODSIG|VALIDSIG')
+    signer_re = re.compile(r'GOODSIG [0-9A-F]{16} .*')
 
-    with os.fdopen(os.open(gpg_output_filename, 
-                           os.O_RDWR|os.O_CREAT), "w+") as gpg_output_file:
+    with open(gpg_output_filename, 'w+') as gpg_output_file:
         gpg_cmd = ['gpg', '--verify',
-                   '--status-fd=' + gpg_output_file.fileno(),
+                   '--status-fd=' + str(gpg_output_file.fileno()),
                    basefile + '.asc', basefile]
 
         print "Verifying Sig:", os.path.basename(basefile)
-        run_command_into_devnull(gpg_cmd)
+        run_command_into_devnull(Error.GPG, gpg_cmd)
 
+    # design note: we must close the file before reading as it seems the only
+    # way python will allow the file contents to be read. even working with a
+    # `.flush()` will not write out the contents and any form of reading without
+    # closing the file results in nothing read into the `gpg_output` variable.
+    with open(gpg_output_filename, 'r') as gpg_output_file:
         gpg_output = gpg_output_file.read()
-        matches = re.findall(r'GOODSIG|VALIDSIG', gpg_output)
+
+        matches = valid_sig_re.findall(gpg_output)
+
+        signer = ' '.join(signer_re.findall(gpg_output)[0].split()[-3:])
 
         if "GOODSIG" in matches and "VALIDSIG" in matches:
-            print build_outcome_stmt(Outcome.PASS, rtxt='GOODSIG, VALIDSIG')
+            print build_outcome_stmt(Outcome.PASS, rtxt='GOODSIG from '+signer)
         else:
             print build_outcome_stmt(Outcome.FAIL, rtxt='BADSIG')
             print gpg_output
 
-    run_command(['rm', '-f', gpg_output_filename])
+    run_command(Error.RM, ['rm', '-f', gpg_output_filename])
 
 # arg1: digest type (either "SHA" or "MD5")
 # arg2: file to compare with extension (e.g. "tar.gz" or "zip")
@@ -316,7 +325,17 @@ def main(release_url,
          staging_dir,
          select_package):
     necessary_programs = set(['gpg', 'wget', 'openssl'])
+
+    # allowable file extensions that are supported. they sit as a regex to
+    # ensure we check the end of the file path of an unknown size. e.g.
+    # 'zip' is 3 chars and 'tar.gz' is 5 so we cannot set a limit. add to this
+    # list if other types should be supported as well as the necessary
+    # decompression command below.
     allowable_file_exts = re.compile(r'tgz$|tar\.gz$|zip$')
+
+    decompression_cmds = {'tar.gz': ['tar', '-xzf'],
+                          'tgz': ['tar', '-xzf'],
+                          'zip': ['unzip', '-oqq']}
 
     # ensure machine has the correct prerequisite programs, files, etc.
     [necessary_programs.add(cmd.split()[0])
@@ -345,8 +364,10 @@ def main(release_url,
         package_map = dict()
         for idx, package in enumerate(package_list):
             package_map[idx] = package
-
-        print package_map
+            
+        # print the index and package in a pretty format
+        for idx, package in package_map.iteritems():
+            print '{}: {}'.format(idx, package)
 
         try:
             package_selection = int(raw_input('Your selection:'))
@@ -356,8 +377,20 @@ def main(release_url,
         except KeyError:
             print 'key error'
 
+    # for each package we want to test...
     for package in package_list:
         print package
+
+        # grab the file extension found
+        file_ext = allowable_file_exts.findall(package)[0]
+
+        download_sourcecode(release_url + '/' + package)
+        # the below files should always exist as mandated by the apache release
+        download_sourcecode(release_url + '/' + package + '.asc')
+        download_sourcecode(release_url + '/' + package + '.md5')
+        download_sourcecode(release_url + '/' + package + '.sha')
+
+        verify_asc(package)
 
 '''
     download_sourcecode

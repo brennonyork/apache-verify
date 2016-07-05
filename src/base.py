@@ -19,6 +19,7 @@ class Error:
     MKDIR = 3
     WGET = 4
     GPG = 5
+    RM = 6
     BINARY_FILES = 9
     DIGEST = 10
     DECOMPRESS = 11
